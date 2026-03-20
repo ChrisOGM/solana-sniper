@@ -2,7 +2,12 @@
 # database.py — ALL DATA STORAGE
 # ============================================================
 
-from supabase import create_client, Client
+try:
+    from supabase import create_client, Client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    print("[DB] Running without database")
 from config import SUPABASE_URL, SUPABASE_KEY
 from datetime import datetime, timedelta
 
