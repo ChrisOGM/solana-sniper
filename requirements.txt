@@ -6,3 +6,4 @@ supabase
 solders
 python-dotenv
 flask
+telethon
