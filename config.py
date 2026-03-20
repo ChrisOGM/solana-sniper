@@ -54,7 +54,7 @@ MONITORED_PROGRAMS = [
 # ── AI SCORING ────────────────────────────────────────────
 MIN_WIN_PROBABILITY    = 80
 KOL_POST_BONUS         = 20
-MAX_TOKEN_AGE_MINS     = 30
+MAX_TOKEN_AGE_MINS     = 10
 
 # ── HARD FILTERS ──────────────────────────────────────────
 MAX_BUY_TAX            = 5
