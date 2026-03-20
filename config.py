@@ -9,8 +9,8 @@ TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID",   "PASTE_HERE")
 
 # ── SOLANA RPC ────────────────────────────────────────────
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "PASTE_HERE")
-HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-HELIUS_WS_URL  = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+HELIUS_RPC_URL = "https://api.devnet.solana.com"
+HELIUS_WS_URL  = "wss://api.devnet.solana.com"
 
 # ── WALLET — stored as env var, NEVER hardcoded ──────────
 WALLET_PRIVATE_KEY = os.getenv("WALLET_PRIVATE_KEY", "")
@@ -90,5 +90,5 @@ MAX_CONCURRENT_CHECKS  = 3    # Max 3 tokens analyzed at once
 API_CALL_DELAY_SECS    = 0.5  # Delay between API calls
 
 # ── MODE ──────────────────────────────────────────────────
-PAPER_TRADING          = True  # TRUE = no real money, alerts only
+PAPER_TRADING  = False # TRUE = no real money, alerts only
                                 # Set to False when ready to go live
