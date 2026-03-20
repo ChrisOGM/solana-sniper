@@ -19,9 +19,7 @@ TELEGRAM_SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING", "")
 # Add group @usernames after joining them on Telegram
 # Leave empty [] to disable scanner
 ALPHA_GROUPS = [
-    # "solana_alpha_calls",
-    # "pump_fun_signals",
-    # Add your groups here
+    "solana",
 ]
 
 # ── SOLANA RPC ────────────────────────────────────────────
