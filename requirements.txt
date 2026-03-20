@@ -1,6 +1,0 @@
-aiohttp
-websockets
-requests
-beautifulsoup4
-flask
-solders
