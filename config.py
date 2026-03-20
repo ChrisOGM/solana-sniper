@@ -3,16 +3,33 @@
 # ============================================================
 import os
 
-# ── TELEGRAM ─────────────────────────────────────────────
+# ── TELEGRAM ALERTS BOT ──────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "PASTE_HERE")
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID",   "PASTE_HERE")
 
+# ── TELEGRAM USER ACCOUNT (for alpha group scanner) ───────
+# Get API_ID + API_HASH from: my.telegram.org → API Development Tools
+# TELEGRAM_SESSION_STRING: copy from Render logs after first run
+TELEGRAM_API_ID         = os.getenv("TELEGRAM_API_ID",         "")
+TELEGRAM_API_HASH       = os.getenv("TELEGRAM_API_HASH",       "")
+TELEGRAM_PHONE          = os.getenv("TELEGRAM_PHONE",          "")
+TELEGRAM_SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING", "")
+
+# ── ALPHA GROUPS TO SCAN ──────────────────────────────────
+# Add group @usernames after joining them on Telegram
+# Leave empty [] to disable scanner
+ALPHA_GROUPS = [
+    # "solana_alpha_calls",
+    # "pump_fun_signals",
+    # Add your groups here
+]
+
 # ── SOLANA RPC ────────────────────────────────────────────
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "PASTE_HERE")
-HELIUS_RPC_URL = "https://api.devnet.solana.com"
-HELIUS_WS_URL  = "wss://api.devnet.solana.com"
+HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+HELIUS_WS_URL  = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 
-# ── WALLET — stored as env var, NEVER hardcoded ──────────
+# ── YOUR SOLANA WALLET ────────────────────────────────────
 WALLET_PRIVATE_KEY = os.getenv("WALLET_PRIVATE_KEY", "")
 WALLET_PUBLIC_KEY  = os.getenv("WALLET_PUBLIC_KEY",  "")
 
@@ -20,7 +37,7 @@ WALLET_PUBLIC_KEY  = os.getenv("WALLET_PUBLIC_KEY",  "")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "PASTE_HERE")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "PASTE_HERE")
 
-# ── INFLUENCER WATCHLIST ──────────────────────────────────
+# ── KOL WATCHLIST ─────────────────────────────────────────
 WATCHED_INFLUENCERS = [
     "cz_binance",
     "elonmusk",
@@ -32,8 +49,14 @@ WATCHED_INFLUENCERS = [
     "bloomstarbms",
 ]
 
-TWITTER_POLL_INTERVAL  = 30   # seconds between checks
-POST_WATCH_WINDOW_MINS = 20   # mins to watch chain after KOL post
+# Priority — checked every 10 seconds across ALL Nitter instances
+# These are the accounts whose posts cause the biggest pumps
+PRIORITY_INFLUENCERS = [
+    "elonmusk",
+    "cz_binance",
+]
+
+POST_WATCH_WINDOW_MINS = 20
 
 NITTER_INSTANCES = [
     "https://nitter.net",
@@ -43,7 +66,7 @@ NITTER_INSTANCES = [
     "https://nitter.kavin.rocks",
 ]
 
-# ── MONITORED PROGRAMS (All Solana launchpads) ───────────
+# ── MONITORED PROGRAMS ────────────────────────────────────
 MONITORED_PROGRAMS = [
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",  # Pump.fun
     "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8", # Raydium AMM
@@ -54,7 +77,7 @@ MONITORED_PROGRAMS = [
 # ── AI SCORING ────────────────────────────────────────────
 MIN_WIN_PROBABILITY    = 80
 KOL_POST_BONUS         = 20
-MAX_TOKEN_AGE_MINS     = 10
+MAX_TOKEN_AGE_MINS     = 10   # Reduced — catch tokens earlier
 
 # ── HARD FILTERS ──────────────────────────────────────────
 MAX_BUY_TAX            = 5
@@ -67,28 +90,23 @@ REJECT_HONEYPOT        = True
 REJECT_BUNDLED         = True
 
 # ── CAPITAL MANAGEMENT ────────────────────────────────────
-# Score-based sizing — never exceeds 10%
-# Score 80-84 → 6% of wallet
-# Score 85-89 → 8% of wallet
-# Score 90+   → 10% of wallet
 MAX_POSITION_PCT       = 10
 
 # ── TAKE PROFIT ───────────────────────────────────────────
-TP_STAGE_1_X           = 10   # At 10x → sell 50%
-TP_STAGE_2_X           = 25   # At 25x → sell 25%
-TP_STAGE_3_X           = 50   # At 50x → sell last 25%
+TP_STAGE_1_X           = 10
+TP_STAGE_2_X           = 25
+TP_STAGE_3_X           = 50
 
 # ── STOP LOSS ─────────────────────────────────────────────
-STOP_LOSS_PCT          = 40   # Exit 100% if down 40%
+STOP_LOSS_PCT          = 40
 
 # ── SMART WALLET ENGINE ───────────────────────────────────
 MIN_WALLET_WIN_RATE    = 80
 MIN_WALLET_TRADES      = 20
 
 # ── RATE LIMITING ─────────────────────────────────────────
-MAX_CONCURRENT_CHECKS  = 3    # Max 3 tokens analyzed at once
-API_CALL_DELAY_SECS    = 0.5  # Delay between API calls
+MAX_CONCURRENT_CHECKS  = 3
+API_CALL_DELAY_SECS    = 0.5
 
 # ── MODE ──────────────────────────────────────────────────
-PAPER_TRADING  = False # TRUE = no real money, alerts only
-                                # Set to False when ready to go live
+PAPER_TRADING          = False
