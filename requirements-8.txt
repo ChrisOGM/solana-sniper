@@ -1,0 +1,8 @@
+aiohttp
+websockets
+requests
+beautifulsoup4
+supabase
+solders
+python-dotenv
+flask
