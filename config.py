@@ -107,4 +107,4 @@ MAX_CONCURRENT_CHECKS  = 3
 API_CALL_DELAY_SECS    = 0.5
 
 # ── MODE ──────────────────────────────────────────────────
-PAPER_TRADING          = False
+PAPER_TRADING          = True
