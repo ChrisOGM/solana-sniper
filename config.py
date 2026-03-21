@@ -103,8 +103,8 @@ MIN_WALLET_WIN_RATE    = 80
 MIN_WALLET_TRADES      = 20
 
 # ── RATE LIMITING ─────────────────────────────────────────
-MAX_CONCURRENT_CHECKS  = 3
-API_CALL_DELAY_SECS    = 0.5
+MAX_CONCURRENT_CHECKS  = 1
+API_CALL_DELAY_SECS    = 2
 
 # ── MODE ──────────────────────────────────────────────────
 PAPER_TRADING          = True
