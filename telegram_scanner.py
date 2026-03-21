@@ -1,7 +1,7 @@
 # ============================================================
 # telegram_scanner.py — TELEGRAM ALPHA GROUP SCANNER
-# OTP verification via web page — no terminal needed
-# Session string persists across restarts via env var
+# Sends session string DIRECTLY to your Telegram bot
+# No need to check Render logs
 # ============================================================
 
 import asyncio
@@ -15,14 +15,12 @@ from config import (
     ALPHA_GROUPS
 )
 
-# ── Solana address patterns ───────────────────────────────
 SOLANA_ADDR  = re.compile(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b')
 PUMPFUN_URL  = re.compile(r'pump\.fun/(?:coin/)?([1-9A-HJ-NP-Za-km-z]{32,44})')
 DEXSCREENER  = re.compile(r'dexscreener\.com/solana/([1-9A-HJ-NP-Za-km-z]{32,44})')
 BIRDEYE      = re.compile(r'birdeye\.so/token/([1-9A-HJ-NP-Za-km-z]{32,44})')
 GMGN         = re.compile(r'gmgn\.ai/sol/token/([1-9A-HJ-NP-Za-km-z]{32,44})')
 
-# ── Always ignore ─────────────────────────────────────────
 IGNORE_ADDRESSES = {
     "So11111111111111111111111111111111111111112",
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -31,10 +29,8 @@ IGNORE_ADDRESSES = {
     "11111111111111111111111111111111",
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1brs",
-    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
 }
 
-# ── State ─────────────────────────────────────────────────
 processed_addresses = set()
 seen_message_ids    = set()
 address_timestamps  = []
@@ -48,10 +44,8 @@ MAX_PER_MINUTE      = 5
 async def start_telegram_scanner():
     print("[SCANNER] Starting Telegram alpha scanner...")
 
-    # Check config
     if not TELEGRAM_API_ID or not TELEGRAM_API_HASH:
-        print("[SCANNER] ⚠️ TELEGRAM_API_ID / TELEGRAM_API_HASH not set")
-        print("[SCANNER] Get from my.telegram.org — scanner disabled")
+        print("[SCANNER] ⚠️ TELEGRAM_API_ID / TELEGRAM_API_HASH not set — disabled")
         try:
             from keep_alive import set_scanner_status
             set_scanner_status("disabled")
@@ -62,7 +56,7 @@ async def start_telegram_scanner():
         return
 
     if not ALPHA_GROUPS:
-        print("[SCANNER] ⚠️ ALPHA_GROUPS empty — add groups to config.py")
+        print("[SCANNER] ⚠️ ALPHA_GROUPS empty — disabled")
         try:
             from keep_alive import set_scanner_status
             set_scanner_status("disabled")
@@ -72,17 +66,11 @@ async def start_telegram_scanner():
             await asyncio.sleep(3600)
         return
 
-    # Auto-reconnect loop
     while True:
         try:
             await connect_and_scan()
         except Exception as e:
             print(f"[SCANNER] Disconnected: {e}")
-            try:
-                from telegram_bot import alert_bot_error
-                await alert_bot_error("TelegramScanner", f"Reconnecting in 30s")
-            except Exception:
-                pass
             await asyncio.sleep(30)
 
 
@@ -95,7 +83,7 @@ async def connect_and_scan():
         from telethon import TelegramClient, events
         from telethon.sessions import StringSession
     except ImportError:
-        print("[SCANNER] ❌ Telethon not installed — check requirements.txt")
+        print("[SCANNER] ❌ Telethon not installed")
         await asyncio.sleep(3600)
         return
 
@@ -112,9 +100,9 @@ async def connect_and_scan():
         auto_reconnect=True
     )
 
-    # ── Phone-based auth with web OTP input ──────────────
+    # ── First time auth — uses web OTP form ──────────────
     if not TELEGRAM_SESSION_STRING:
-        print("[SCANNER] First-time auth — sending OTP to your phone...")
+        print("[SCANNER] First-time auth — sending OTP to phone...")
 
         try:
             from keep_alive import set_scanner_status, get_otp_from_web
@@ -122,84 +110,78 @@ async def connect_and_scan():
         except Exception:
             get_otp_from_web = None
 
-        # Send OTP to phone
         await client.connect()
         if not await client.is_user_authorized():
             await client.send_code_request(TELEGRAM_PHONE)
             print(f"[SCANNER] OTP sent to {TELEGRAM_PHONE}")
 
-            # Alert user to open OTP page
             try:
                 from telegram_bot import send_alert
                 await send_alert(
                     f"🔐 *TELEGRAM SCANNER SETUP*\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"Telegram sent an OTP to your phone.\n\n"
-                    f"Open this URL in your browser to enter it:\n"
+                    f"Open this in your browser:\n"
                     f"`https://solana-sniper-8pb5.onrender.com/otp`\n\n"
-                    f"⏳ Waiting 5 minutes for your code..."
+                    f"⏳ Waiting 5 minutes..."
                 )
             except Exception:
                 pass
 
-            print("[SCANNER] Waiting for OTP via web form...")
-            print("[SCANNER] Open: https://solana-sniper-8pb5.onrender.com/otp")
-
-            # Wait for OTP from web form (5 minute timeout)
-            loop = asyncio.get_event_loop()
+            loop     = asyncio.get_event_loop()
             otp_code = await loop.run_in_executor(
                 None,
                 lambda: get_otp_from_web(timeout=300) if get_otp_from_web else None
             )
 
             if not otp_code:
-                print("[SCANNER] ⏰ OTP timeout — retrying in 60s")
+                print("[SCANNER] OTP timeout — retrying in 60s")
                 await asyncio.sleep(60)
                 return
 
             try:
                 await client.sign_in(TELEGRAM_PHONE, otp_code)
-                print("[SCANNER] ✅ Authenticated successfully!")
+                print("[SCANNER] ✅ Authenticated!")
             except Exception as e:
                 print(f"[SCANNER] Auth failed: {e}")
                 await asyncio.sleep(30)
                 return
 
-        # Save session string
+        # ── Save session string — send DIRECTLY to Telegram ──
         session_str = client.session.save()
-        print("\n" + "="*60)
-        print("ADD THIS TO RENDER ENVIRONMENT VARIABLES:")
-        print(f"Key:   TELEGRAM_SESSION_STRING")
-        print(f"Value: {session_str}")
-        print("="*60 + "\n")
+        print(f"[SCANNER] Session string: {session_str[:30]}...")
 
+        # Send directly to your Filtrum bot — no log searching needed
         try:
             from telegram_bot import send_alert
             await send_alert(
-                f"✅ *SCANNER AUTHENTICATED*\n"
+                f"🔑 *YOUR SESSION STRING*\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"Check your Render deploy logs.\n"
-                f"Copy TELEGRAM_SESSION_STRING value\n"
-                f"→ Add to Render Environment Variables\n"
-                f"→ Redeploy\n\n"
-                f"After that: no more OTP needed ever."
+                f"Copy EVERYTHING between the lines below\n"
+                f"and add to Render as TELEGRAM_SESSION_STRING:\n\n"
+                f"---START---\n"
+                f"{session_str}\n"
+                f"---END---\n\n"
+                f"Steps:\n"
+                f"1. Copy the string between START and END\n"
+                f"2. Render → Environment → Add variable\n"
+                f"3. Key: TELEGRAM_SESSION_STRING\n"
+                f"4. Value: paste the string\n"
+                f"5. Save → Manual Deploy"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[SCANNER] Could not send session string: {e}")
 
     else:
-        # Session string exists — connect directly, no OTP
         await client.start()
 
-    # Update status
     try:
         from keep_alive import set_scanner_status
         set_scanner_status("active")
     except Exception:
         pass
 
-    print(f"[SCANNER] ✅ Connected as Telegram user")
-    print(f"[SCANNER] Monitoring: {ALPHA_GROUPS}")
+    print(f"[SCANNER] ✅ Connected — monitoring {len(ALPHA_GROUPS)} groups")
 
     try:
         from telegram_bot import send_alert
@@ -207,13 +189,12 @@ async def connect_and_scan():
             f"🔍 *TELEGRAM ALPHA SCANNER ONLINE*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📡 Groups: *{len(ALPHA_GROUPS)}*\n"
-            f"⚡ Real-time contract detection active\n"
-            f"🎯 Auto-buy threshold: 80/100"
+            f"⚡ Real-time detection active\n"
+            f"🎯 Auto-buy on score ≥ 80"
         )
     except Exception:
         pass
 
-    # Message handler
     @client.on(events.NewMessage(chats=ALPHA_GROUPS))
     async def on_message(event):
         try:
@@ -221,7 +202,6 @@ async def connect_and_scan():
         except Exception as e:
             print(f"[SCANNER] Handler error: {e}")
 
-    print("[SCANNER] 👀 Listening for contract addresses...")
     await client.run_until_disconnected()
 
 
@@ -243,7 +223,6 @@ async def handle_message(event):
         return
     seen_message_ids.add(msg_id)
 
-    # Keep set manageable
     if len(seen_message_ids) > 50000:
         oldest = list(seen_message_ids)[:25000]
         for m in oldest:
@@ -264,11 +243,8 @@ async def handle_message(event):
                           if now - t < timedelta(minutes=1)]
 
     for address in addresses:
-        if address in processed_addresses:
+        if address in processed_addresses or address in IGNORE_ADDRESSES:
             continue
-        if address in IGNORE_ADDRESSES:
-            continue
-
         if len(address_timestamps) >= MAX_PER_MINUTE:
             await asyncio.sleep(15)
             address_timestamps = [t for t in address_timestamps
@@ -277,8 +253,6 @@ async def handle_message(event):
         processed_addresses.add(address)
         address_timestamps.append(datetime.utcnow())
 
-        print(f"[SCANNER] 🎯 [{group_name}]: {address[:20]}...")
-
         try:
             from telegram_bot import send_alert
             await send_alert(
@@ -286,10 +260,10 @@ async def handle_message(event):
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"👥 *{group_name}*\n"
                 f"📋 `{address}`\n"
-                f"⚡ Running safety checks..."
+                f"⚡ Running checks..."
             )
-        except Exception as e:
-            print(f"[SCANNER] Alert error: {e}")
+        except Exception:
+            pass
 
         asyncio.create_task(run_scanner_pipeline(address, group_name))
 
@@ -343,11 +317,7 @@ async def run_scanner_pipeline(token_address, group_name):
         if not passed:
             mark_token_seen(token_address, token_name, score=0, decision="FILTERED")
             await send_alert(
-                f"🛡️ *GROUP SIGNAL FILTERED*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🪙 {token_name} (${ticker})\n"
-                f"❌ {reason}\n"
-                f"👥 {group_name}"
+                f"🛡️ *FILTERED*\n{token_name} (${ticker})\n❌ {reason}\n👥 {group_name}"
             )
             return
 
@@ -358,11 +328,8 @@ async def run_scanner_pipeline(token_address, group_name):
         if recommendation == "SKIP":
             mark_token_seen(token_address, token_name, score=score, decision="SKIPPED")
             await send_alert(
-                f"📊 *GROUP SIGNAL — LOW SCORE*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🪙 {token_name} (${ticker})\n"
-                f"📊 Score: {score}/100 (need 80+)\n"
-                f"👥 {group_name}"
+                f"📊 *LOW SCORE*\n{token_name} (${ticker})\n"
+                f"Score: {score}/100\n👥 {group_name}"
             )
             return
 
