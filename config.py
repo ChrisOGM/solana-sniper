@@ -73,14 +73,14 @@ MONITORED_PROGRAMS = [
 ]
 
 # ── AI SCORING ────────────────────────────────────────────
-MIN_WIN_PROBABILITY    = 80
+MIN_WIN_PROBABILITY    = 60
 KOL_POST_BONUS         = 20
-MAX_TOKEN_AGE_MINS     = 10   # Reduced — catch tokens earlier
+MAX_TOKEN_AGE_MINS     = 30   # Reduced — catch tokens earlier
 
 # ── HARD FILTERS ──────────────────────────────────────────
 MAX_BUY_TAX            = 5
 MAX_SELL_TAX           = 5
-MIN_LIQUIDITY_USD      = 5000
+MIN_LIQUIDITY_USD      = 1000
 MAX_TOP_HOLDER_PCT     = 20
 REQUIRE_LP_LOCKED      = True
 REQUIRE_RENOUNCED      = True
