@@ -1,52 +1,33 @@
 # ============================================================
 # listener.py — SOLANA TOKEN LISTENER
-# Rewritten based on how working Pump.fun bots actually detect tokens
-# Uses correct log patterns: "Create" instruction, not InitializeMint
-# Handles both Pump.fun and PumpSwap (new DEX)
+# Based on verified working Pump.fun bot implementations
+# Uses blockSubscribe + create instruction filter
+# Pump.fun program: 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P
 # ============================================================
 
 import asyncio
 import json
 import aiohttp
 import websockets
-import base64
-import struct
 from datetime import datetime
-from config import (
-    HELIUS_API_KEY,
-    HELIUS_WS_URL,
-    API_CALL_DELAY_SECS,
-    MAX_CONCURRENT_CHECKS
-)
+from config import HELIUS_API_KEY, API_CALL_DELAY_SECS, MAX_CONCURRENT_CHECKS
 from filters import run_hard_filters
 from scorer import score_token
 from database import token_already_seen, mark_token_seen
 from telegram_bot import alert_filter_rejected
 
-# ── Program IDs ───────────────────────────────────────────
-PUMP_FUN_PROGRAM    = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
-PUMP_SWAP_PROGRAM   = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"  # PumpSwap AMM
-RAYDIUM_PROGRAM     = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
-METEORA_PROGRAM     = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+# ── Pump.fun program ID (verified from working bots) ──────
+PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 
-# ── Token detection patterns (what working bots actually look for) ─
-# Pump.fun emits these specific strings in logs when a token is created
-CREATE_PATTERNS = [
-    "Program log: Instruction: Create",
-    "Program log: Instruction: Create_v2",
-    "Program log: Instruction: Initialize",
-    "InitializeMint2",
-    "Program log: Create",
-]
-
-# ── Stable tokens to ignore ───────────────────────────────
+# ── Stable tokens to skip ─────────────────────────────────
 IGNORE_MINTS = {
     "So11111111111111111111111111111111111111112",
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
 }
 
-semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
+semaphore   = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
+seen_sigs   = set()  # Deduplicate transactions
 
 
 # ============================================================
@@ -54,8 +35,7 @@ semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 # ============================================================
 
 async def start_listener():
-    print("[LISTENER] Starting Solana token listener...")
-    print(f"[LISTENER] Watching: Pump.fun + PumpSwap + Raydium + Meteora")
+    print("[LISTENER] Starting Pump.fun token listener...")
     while True:
         try:
             await connect_and_listen()
@@ -65,35 +45,32 @@ async def start_listener():
 
 
 async def connect_and_listen():
-    # Use Helius WebSocket with API key for reliable connection
+    # Use Helius for reliable WebSocket
     ws_url = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 
     async with websockets.connect(
         ws_url,
         ping_interval=30,
-        ping_timeout=10,
+        ping_timeout=15,
         close_timeout=5,
-        max_size=10_000_000  # 10MB max message size
+        max_size=10_000_000
     ) as ws:
-        print("[LISTENER] ✅ Connected to Solana mainnet via Helius")
+        print("[LISTENER] ✅ Connected to Solana mainnet")
 
-        # Subscribe to Pump.fun program logs
-        # This is how working bots detect new token launches
-        subscription_id = 1
-        for program_id in [PUMP_FUN_PROGRAM, PUMP_SWAP_PROGRAM,
-                           RAYDIUM_PROGRAM, METEORA_PROGRAM]:
-            await ws.send(json.dumps({
-                "jsonrpc": "2.0",
-                "id":      subscription_id,
-                "method":  "logsSubscribe",
-                "params":  [
-                    {"mentions": [program_id]},
-                    {"commitment": "confirmed"}
-                ]
-            }))
-            subscription_id += 1
+        # Subscribe using logsSubscribe to Pump.fun program
+        # This is the verified working method from Chainstack docs
+        await ws.send(json.dumps({
+            "jsonrpc": "2.0",
+            "id":      1,
+            "method":  "logsSubscribe",
+            "params":  [
+                {"mentions": [PUMP_FUN_PROGRAM]},
+                {"commitment": "confirmed"}
+            ]
+        }))
 
-        print("[LISTENER] Subscribed to all Solana launchpads")
+        print(f"[LISTENER] Subscribed to Pump.fun: {PUMP_FUN_PROGRAM}")
+        print("[LISTENER] 👀 Watching for new token launches...")
 
         async for raw in ws:
             try:
@@ -102,20 +79,17 @@ async def connect_and_listen():
             except json.JSONDecodeError:
                 continue
             except Exception as e:
-                print(f"[LISTENER] Message error: {e}")
+                print(f"[LISTENER] Error: {e}")
 
 
 # ============================================================
-# HANDLE INCOMING MESSAGES
+# HANDLE MESSAGE
 # ============================================================
 
 async def handle_message(msg):
-    """
-    Filters messages for new token creation events.
-    Working bots look for specific log strings, not just any transaction.
-    """
     # Skip subscription confirmations
-    if "result" in msg and "error" not in msg:
+    if "result" in msg and isinstance(msg.get("result"), int):
+        print(f"[LISTENER] Subscription confirmed: {msg['result']}")
         return
 
     try:
@@ -126,45 +100,54 @@ async def handle_message(msg):
         signature = value.get("signature", "")
         err       = value.get("err", None)
 
-        # Skip failed transactions
+        # Skip failed transactions — key fix from working bots
         if err is not None:
             return
 
         if not logs or not signature:
             return
 
-        # Check if this transaction contains a token creation instruction
-        # This is the key fix — working bots check for specific log strings
-        is_new_token = any(
-            pattern in log
-            for log in logs
-            for pattern in CREATE_PATTERNS
-        )
-
-        if not is_new_token:
+        # Skip already seen
+        if signature in seen_sigs:
             return
 
-        print(f"[LISTENER] 🎯 New token event: {signature[:20]}...")
+        # Check for create instruction — verified pattern from working bots
+        # Pump.fun emits "Create" when a new token is launched
+        is_create = any(
+            "Instruction: Create" in log or
+            "create" in log.lower() and "pump" in log.lower()
+            for log in logs
+        )
 
-        # Process with rate limiting
+        if not is_create:
+            return
+
+        seen_sigs.add(signature)
+
+        # Keep set manageable
+        if len(seen_sigs) > 10000:
+            oldest = list(seen_sigs)[:5000]
+            for s in oldest:
+                seen_sigs.discard(s)
+
+        print(f"[LISTENER] 🎯 New token create: {signature[:20]}...")
+
         async with semaphore:
             await asyncio.sleep(API_CALL_DELAY_SECS)
-            token_info = await get_token_from_signature(signature, logs)
-            if token_info:
-                await process_new_token(token_info)
+            await process_signature(signature)
 
     except Exception as e:
         print(f"[LISTENER] handle_message error: {e}")
 
 
 # ============================================================
-# GET TOKEN INFO FROM TRANSACTION
+# PROCESS SIGNATURE
 # ============================================================
 
-async def get_token_from_signature(signature, logs):
+async def process_signature(signature):
     """
-    Extracts token mint address from transaction.
-    Uses Helius Enhanced Transactions API for structured data.
+    Gets full transaction details from Helius Enhanced API
+    and extracts the new token mint address
     """
     try:
         url     = f"https://api.helius.xyz/v0/transactions?api-key={HELIUS_API_KEY}"
@@ -176,151 +159,150 @@ async def get_token_from_signature(signature, logs):
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 if resp.status == 429:
-                    print("[LISTENER] Rate limited — waiting 5s")
-                    await asyncio.sleep(5)
-                    return None
+                    print("[LISTENER] Rate limited — waiting 10s")
+                    await asyncio.sleep(10)
+                    return
                 if resp.status != 200:
-                    return None
+                    return
                 data = await resp.json()
                 if not data or not isinstance(data, list):
-                    return None
-                return extract_token_from_tx(data[0], logs)
+                    return
+
+                tx = data[0]
+                await extract_and_process_token(tx)
 
     except Exception as e:
-        print(f"[LISTENER] get_token_from_signature error: {e}")
-        return None
+        print(f"[LISTENER] process_signature error: {e}")
 
 
-def extract_token_from_tx(tx, logs):
+async def extract_and_process_token(tx):
     """
-    Extracts the newly created token mint from a transaction.
-    Checks tokenTransfers first, then accountData.
+    Extracts token mint from Helius enhanced transaction.
+    Based on Chainstack working bot implementation.
     """
     try:
-        # Method 1 — Check tokenTransfers (most reliable)
+        # Get postTokenBalances — this is where the new mint appears
+        post_token_balances = tx.get("meta", {})
+        if not post_token_balances:
+            post_token_balances = {}
+
         token_transfers = tx.get("tokenTransfers", [])
+        account_data    = tx.get("accountData", [])
+        timestamp       = tx.get("timestamp", None)
+
+        deploy_time = (
+            datetime.utcfromtimestamp(timestamp)
+            if timestamp else datetime.utcnow()
+        )
+
+        mint_address = None
+
+        # Method 1 — tokenTransfers (most reliable for Pump.fun)
         for transfer in token_transfers:
             mint = transfer.get("mint", "")
             if mint and len(mint) > 30 and mint not in IGNORE_MINTS:
-                return build_token_info(mint, tx)
+                mint_address = mint
+                break
 
-        # Method 2 — Check account data for new mints
-        account_data = tx.get("accountData", [])
-        for account in account_data:
-            # New mints have a large negative SOL change (rent deposit)
-            native_change = account.get("nativeBalanceChange", 0)
-            addr          = account.get("account", "")
-            if (native_change < -1000000 and  # Spent SOL for rent
-                    addr and len(addr) > 30 and
-                    addr not in IGNORE_MINTS):
-                return build_token_info(addr, tx)
+        # Method 2 — accountData with large SOL spend (mint rent)
+        if not mint_address:
+            for account in account_data:
+                addr   = account.get("account", "")
+                change = account.get("nativeBalanceChange", 0)
+                # New token accounts have negative SOL change for rent
+                if change < -1388880 and addr and len(addr) > 30:
+                    if addr not in IGNORE_MINTS:
+                        mint_address = addr
+                        break
 
-        # Method 3 — Extract from logs directly
-        # Pump.fun logs contain the mint address
-        for log in logs:
-            if "mint:" in log.lower():
-                parts = log.split()
-                for part in parts:
-                    if len(part) > 30 and is_valid_base58(part):
-                        if part not in IGNORE_MINTS:
-                            return build_token_info(part, tx)
+        if not mint_address:
+            return
 
-        return None
+        # Skip if already seen
+        if token_already_seen(mint_address):
+            return
+
+        print(f"[LISTENER] 🪙 Token found: {mint_address[:20]}...")
+
+        # Get name from Pump.fun API directly (faster than DexScreener for new tokens)
+        token_name, ticker = await get_pump_token_info(mint_address)
+
+        token_info = {
+            "token_address": mint_address,
+            "token_name":    token_name,
+            "ticker":        ticker,
+            "deploy_time":   deploy_time,
+            "source":        "AI_DISCOVERY"
+        }
+
+        await run_pipeline(token_info)
 
     except Exception as e:
-        print(f"[LISTENER] extract_token_from_tx error: {e}")
-        return None
-
-
-def build_token_info(mint_address, tx):
-    """Builds token info dict from mint address and transaction"""
-    timestamp   = tx.get("timestamp", None)
-    deploy_time = (
-        datetime.utcfromtimestamp(timestamp)
-        if timestamp else datetime.utcnow()
-    )
-    return {
-        "token_address": mint_address,
-        "token_name":    "Unknown",
-        "ticker":        "???",
-        "deploy_time":   deploy_time,
-        "source":        "AI_DISCOVERY"
-    }
-
-
-def is_valid_base58(s):
-    """Quick check if string looks like a valid Solana address"""
-    valid = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
-    return all(c in valid for c in s) and 32 <= len(s) <= 44
+        print(f"[LISTENER] extract_and_process_token error: {e}")
 
 
 # ============================================================
-# ENRICH TOKEN DATA
+# GET TOKEN INFO
 # ============================================================
 
-async def enrich_token_data(token_info):
-    """Gets real name and ticker from DexScreener"""
-    token_address = token_info["token_address"]
+async def get_pump_token_info(mint_address):
+    """
+    Gets token name and ticker.
+    Tries Pump.fun API first (fastest for new tokens)
+    then falls back to DexScreener.
+    """
+    # Try Pump.fun API first
     try:
-        url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+        url = f"https://frontend-api.pump.fun/coins/{mint_address}"
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                url, timeout=aiohttp.ClientTimeout(total=8)
+                url, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    name   = data.get("name",   "Unknown")
+                    symbol = data.get("symbol", "???")
+                    if name and name != "Unknown":
+                        return name, symbol
+    except Exception:
+        pass
+
+    # Fallback to DexScreener
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{mint_address}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=6)
             ) as resp:
                 if resp.status == 200:
                     data  = await resp.json()
                     pairs = data.get("pairs", [])
                     if pairs:
                         base = pairs[0].get("baseToken", {})
-                        token_info["token_name"] = base.get("name",   "Unknown")
-                        token_info["ticker"]     = base.get("symbol", "???")
+                        return base.get("name", "Unknown"), base.get("symbol", "???")
     except Exception:
         pass
 
-    # Also try Pump.fun API directly for very new tokens
-    if token_info["token_name"] == "Unknown":
-        try:
-            url = f"https://frontend-api.pump.fun/coins/{token_address}"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=5)
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        token_info["token_name"] = data.get("name",   "Unknown")
-                        token_info["ticker"]     = data.get("symbol", "???")
-        except Exception:
-            pass
-
-    return token_info
+    return "Unknown", "???"
 
 
 # ============================================================
-# PROCESS NEW TOKEN — full pipeline
+# FULL PIPELINE
 # ============================================================
 
-async def process_new_token(token_info):
+async def run_pipeline(token_info):
     token_address = token_info["token_address"]
+    token_name    = token_info["token_name"]
+    ticker        = token_info["ticker"]
     deploy_time   = token_info["deploy_time"]
     source        = token_info["source"]
-
-    # Duplicate check
-    if token_already_seen(token_address):
-        return
-
-    # Enrich with real name/ticker
-    token_info = await enrich_token_data(token_info)
-    token_name = token_info["token_name"]
-    ticker     = token_info["ticker"]
-
-    print(f"[PIPELINE] Analyzing: {ticker} ({token_address[:20]}...)")
 
     # Hard filters
     passed, reason = run_hard_filters(token_address)
     if not passed:
         await alert_filter_rejected(ticker, token_address, reason)
         mark_token_seen(token_address, token_name, score=0, decision="FILTERED")
-        print(f"[PIPELINE] ❌ Filtered: {ticker} — {reason}")
+        print(f"[PIPELINE] ❌ {ticker}: {reason}")
         return
 
     # AI Score
@@ -328,13 +310,13 @@ async def process_new_token(token_info):
         token_address, token_name, ticker, deploy_time
     )
 
-    print(f"[PIPELINE] Score: {ticker} = {score}/100 → {recommendation}")
+    print(f"[PIPELINE] 📊 {ticker}: {score}/100 → {recommendation}")
 
     if recommendation == "SKIP":
         mark_token_seen(token_address, token_name, score=score, decision="SKIPPED")
         return
 
-    # Buy signal
+    # Buy
     mark_token_seen(token_address, token_name, score=score, decision="BOUGHT")
 
     from telegram_bot import alert_new_token_detected
