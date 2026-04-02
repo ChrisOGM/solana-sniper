@@ -25,8 +25,8 @@ ALPHA_GROUPS = [
 # ── SOLANA RPC ────────────────────────────────────────────
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "PASTE_HERE")
 HELIUS_RPC_URL = "https://api.mainnet-beta.solana.com"
-HELIUS_WS_URL = "wss://api.mainnet-beta.solana.com"
-
+QUICKNODE_WS_URL = os.getenv("QUICKNODE_WS_URL", "")
+HELIUS_WS_URL    = QUICKNODE_WS_URL if QUICKNODE_WS_URL else f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 # ── YOUR SOLANA WALLET ────────────────────────────────────
 WALLET_PRIVATE_KEY = os.getenv("WALLET_PRIVATE_KEY", "")
 WALLET_PUBLIC_KEY  = os.getenv("WALLET_PUBLIC_KEY",  "")
